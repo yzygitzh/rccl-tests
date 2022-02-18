@@ -55,8 +55,8 @@ LIBRARIES += rccl
 HIPLDFLAGS   += $(LIBRARIES:%=-l%)
 
 DST_DIR := $(BUILDDIR)
-SRC_FILES := $(wildcard *.cu)
-OBJ_FILES := $(SRC_FILES:%.cu=${DST_DIR}/%.o)
+SRC_FILES := $(wildcard *.cpp)
+OBJ_FILES := $(SRC_FILES:%.cpp=${DST_DIR}/%.o)
 BIN_FILES_LIST := all_reduce all_gather broadcast reduce_scatter reduce alltoall scatter gather sendrecv hypercube alltoallv
 BIN_FILES := $(BIN_FILES_LIST:%=${DST_DIR}/%_perf)
 
@@ -65,7 +65,7 @@ build: ${BIN_FILES}
 clean:
 	rm -rf ${DST_DIR}
 
-${DST_DIR}/%.o: %.cu common.h
+${DST_DIR}/%.o: %.cpp common.h
 	@printf "Compiling  %-35s > %s\n" $< $@
 	@mkdir -p ${DST_DIR}
 	echo "$(HIPCC) -o $@ $(HIPCUFLAGS) -c $<"
