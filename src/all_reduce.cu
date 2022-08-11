@@ -61,8 +61,24 @@ void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, doubl
   *busBw = baseBw * factor;
 }
 
+#include <mpi.h>
 testResult_t AllReduceRunColl(void* sendbuff, void* recvbuff, size_t count, ncclDataType_t type, ncclRedOp_t op, int root, ncclComm_t comm, hipStream_t stream) {
-  NCCLCHECK(ncclAllReduce(sendbuff, recvbuff, count, type, op, comm, stream));
+  if (sendbuff != recvbuff)
+    return testSuccess;
+  hipStream_t stream_persist;
+  HIPCHECK(hipStreamCreateWithFlags(&stream_persist, hipStreamNonBlocking));
+  NCCLCHECK(ncclAllReduce(sendbuff, recvbuff, count, type, op, comm, stream_persist));
+  hipStreamSynchronize(stream);
+  MPI_Barrier(MPI_COMM_WORLD);
+  double t0 = MPI_Wtime();
+  for (int rept = 0; rept < 1000; rept++)
+    NCCLCHECK(ncclSynchronize(rept, comm, stream));
+  hipStreamSynchronize(stream);
+  double t1 = MPI_Wtime();
+  printf("RRRRRRRRRRR %f\n", t1-t0);
+  hipStreamSynchronize(stream_persist);
+  HIPCHECK(hipStreamDestroy(stream_persist));
+
   return testSuccess;
 }
 
