@@ -14,6 +14,7 @@
 #include <type_traits>
 #include <getopt.h>
 #include <libgen.h>
+#include <string>
 
 //#define DEBUG_PRINT
 
@@ -94,6 +95,9 @@ static int numDevices = 1;
 static int ranksPerGpu = 1;
 static int enable_multiranks = 0;
 static int delay_inout_place = 0;
+static std::string msccl_algo_file_path;
+static mscclAlgoHandle_t msccl_algo_handle;
+static bool msccl_algo_enabled = false;
 
 #define NUM_BLOCKS 32
 
@@ -424,10 +428,17 @@ testResult_t startColl(struct threadArgs* args, ncclDataType_t type, ncclRedOp_t
     }
     #endif
 
-    TESTCHECK(args->collTest->runColl(
-          (void*)(in_place ? recvBuff + args->sendInplaceOffset*rank : sendBuff),
-          (void*)(in_place ? recvBuff + args->recvInplaceOffset*rank : recvBuff),
-        count, type, op, root, args->comms[i], args->streams[i]));
+    if (msccl_algo_enabled) {
+      NCCLCHECK(mscclRunAlgo(
+        (void*)(in_place ? recvBuff + args->sendInplaceOffset*rank : sendBuff),
+        (void*)(in_place ? recvBuff + args->recvInplaceOffset*rank : recvBuff),
+        count, type, op, msccl_algo_handle, args->comms[i], args->streams[i]));
+    } else {
+      TESTCHECK(args->collTest->runColl(
+            (void*)(in_place ? recvBuff + args->sendInplaceOffset*rank : sendBuff),
+            (void*)(in_place ? recvBuff + args->recvInplaceOffset*rank : recvBuff),
+          count, type, op, root, args->comms[i], args->streams[i]));
+    }
 
     #if NCCL_VERSION_CODE >= NCCL_VERSION(2,11,0)
     if(opIndex >= ncclNumOps) {
@@ -795,6 +806,7 @@ int main(int argc, char* argv[]) {
     {"cudagraph", required_argument, 0, 'G'},
     {"report_cputime", required_argument, 0, 'C'},
     {"average", required_argument, 0, 'a'},
+    {"msccl_algo_file_path", required_argument, 0, 'M'},
 #ifdef RCCL_MULTIRANKPERGPU
     {"enable_multiranks", required_argument, 0, 'x'},
     {"ranks_per_gpu", required_argument, 0, 'R'},
@@ -807,9 +819,9 @@ int main(int argc, char* argv[]) {
     int c;
 
 #ifdef RCCL_MULTIRANKPERGPU    
-    c = getopt_long(argc, argv, "t:g:b:e:i:f:n:m:w:p:c:o:d:r:z:Y:T:G:C:a:y:s:u:h:R:x:q:", longopts, &longindex);
+    c = getopt_long(argc, argv, "t:g:b:e:i:f:n:m:w:p:c:o:d:r:z:Y:T:G:C:a:y:s:u:h:R:x:q:M:", longopts, &longindex);
 #else
-    c = getopt_long(argc, argv, "t:g:b:e:i:f:n:m:w:p:c:o:d:r:z:Y:T:G:C:a:y:s:u:h:q:", longopts, &longindex);
+    c = getopt_long(argc, argv, "t:g:b:e:i:f:n:m:w:p:c:o:d:r:z:Y:T:G:C:a:y:s:u:h:q:M:", longopts, &longindex);
 #endif
 
     if (c == -1)
@@ -920,6 +932,10 @@ int main(int argc, char* argv[]) {
 #endif
       case 'q':
         delay_inout_place = (int)strtol(optarg, NULL, 10);
+        break;
+      case 'M':
+        msccl_algo_file_path = optarg;
+        msccl_algo_enabled = true;
         break;
       case 'h':
       default:
@@ -1147,6 +1163,10 @@ testResult_t run() {
      }
   }
 
+  if (msccl_algo_enabled) {
+    NCCLCHECK(mscclLoadAlgo(msccl_algo_file_path.c_str(), &msccl_algo_handle));
+  }
+
   int errors[nThreads];
   double bw[nThreads];
   double* delta;
@@ -1253,6 +1273,11 @@ testResult_t run() {
   PRINT("# Out of bounds values : %d %s\n", errors[0], errors[0] ? "FAILED" : "OK");
   PRINT("# Avg bus bandwidth    : %g %s\n", bw[0], check_avg_bw == -1 ? "" : (bw[0] < check_avg_bw*(0.9) ? "FAILED" : "OK"));
   PRINT("#\n");
+
+  if (msccl_algo_enabled) {
+    NCCLCHECK(mscclUnloadAlgo(msccl_algo_handle));
+  }
+
 #ifdef MPI_SUPPORT
   MPI_Finalize();
 #endif
